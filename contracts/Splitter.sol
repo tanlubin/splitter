@@ -3,65 +3,53 @@ pragma solidity ^0.4.18;
 // import "./ConvertLib.sol";
 
 contract Splitter {
+    mapping (address => uint256) public balances;
 	address public alice;
-	address public bob;
-	address public carol;
 	bool alreadyPaid;
 
-	
-	event SplitEvent(address _from, address _to, uint256 _value);
+	event LogSplit(address indexed _accountA, address indexed _accountB, uint256 indexed _value);
+    event LogWithdrawal(address indexed _account, uint256 indexed _value);
 
-	function Splitter(address _bob, address _carol ) 
+	function Splitter() 
 		public 
 	{
 		alice = msg.sender;
-		bob = _bob;
-		carol = _carol;
-
-// 		alreadyPaid = false;
 	}
 
-	function split() 
+	function split(address _bob, address _carol) 
 		public 
 		payable 
 		returns (bool success)
 	{
-		if ((msg.sender !=  alice) ||
-				(msg.value <= 0) || 
-				((msg.value%2) != 0))  {
-			revert();
-		}
+		require(msg.sender == alice);
+		require(msg.value > 0);
+		require((msg.value%2) == 0);
 		
 		uint256 halfAmount = msg.value/2;
+		
+        balances[_bob] += halfAmount;
+        assert(balances[_bob] >= halfAmount);
         
-        //Make payment here.
-        give(bob, halfAmount);
+        balances[_carol] += halfAmount;
+        assert(balances[_carol] >= halfAmount);
         
-        give(carol, halfAmount);
-        // SplitEvent(alice,carol,halfAmount);
+        LogSplit(_bob, _carol, halfAmount);
         
 		return true;
 	}
 	
-	function give(address recipient, uint256 amount)
-	    private
+	function withdrawal()
+	    public
 	{
-	    if (!alreadyPaid){
-	        alreadyPaid = true;
-	        recipient.transfer(amount);
-	        alreadyPaid = false;
-	        SplitEvent(alice,recipient,amount);
-	    }
+	    uint256 withdrawalAmount = balances[msg.sender];
+	    require(withdrawalAmount > 0);
+	    balances[msg.sender] = 0;
+	    LogWithdrawal(msg.sender, withdrawalAmount);
+	    msg.sender.transfer(withdrawalAmount);
 	}
 	    
-
-	function getContractBalance()
-		view
-		public
-		returns (uint256){
-			return address(this).balance;
-		}
-    
-    function () public {}
+    function () public {
+        revert();
+    }
 
 }

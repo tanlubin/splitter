@@ -1,30 +1,27 @@
 var Splitter = artifacts.require("./Splitter.sol");
+const expectedExceptionPromise = require("./expected_exception_testRPC_and_geth.js");
 
 contract('Splitter', function(accounts){
 	
 
-	var alice = accounts[0];
-	var bob = accounts[1];
-	var carol = accounts[2];
-
-	var balanceAlice;
-	var balanceBob;
-	var balanceCarol;
+	const alice = accounts[0];
+	const bob = accounts[1];
+	const carol = accounts[2];
 
 	beforeEach( function() {
-		return Splitter.new(bob, carol, {from:alice})
+		return Splitter.new({from:alice})
 		.then(function(instance){
-			contract = instance;
+			splitterContract = instance;
 		});
 	});
 
 
-	it("should be owned by owner", function() {
-		return contract.alice({from:alice})
-		.then(function(_alice){
-			assert.strictEqual(_alice,alice, "Contract is not owned by owner");	
-		});
-	});
+	// it("should be owned by owner", function() {
+	// 	return splitterContract.alice()
+	// 	.then(function(_alice){
+	// 		assert.strictEqual(_alice,alice, "Contract is not owned by owner");	
+	// 	});
+	// });
 
 
 	/*
@@ -37,161 +34,111 @@ contract('Splitter', function(accounts){
 
 	it("splits correctly", function(){
 
-		var amountToSend = 5454545454;
-		var newBalanceBob;
-		var newBalanceCarol;
-		var newBalanceAlice;
+		var amountToSend = web3.toBigNumber(5454545454);
+		var halfAmount = amountToSend.div(2);
+		var newBalanceAlice, newBalanceBob, newBalanceCarol;
+		var balanceAlice, balanceBob, balanceCarol;
+		var gasUsed, gasPrice, gasCost;
+		var expectedBalanceAlice, expectedBalanceBob, expectedBalanceCarol;
 
-		// web3.eth.getBalance(bob,(err, balance) => 
-		// 	balanceBob = balance);
-		// web3.eth.getBalance(carol,(err, balance) => 
-		// 	balanceCarol = balance);
-		// web3.eth.getBalance(alice,(err, balance) => 
-		// 	balanceAlice = balance);
+		web3.eth.getBalance(bob,(err, balance) => balanceBob = balance);
+		web3.eth.getBalance(carol,(err, balance) => balanceCarol = balance);
+		web3.eth.getBalance(alice,(err, balance) => balanceAlice = balance);
 
-		balanceBob = web3.eth.getBalance(bob);
-		balanceCarol = web3.eth.getBalance(carol);
-		balanceAlice = web3.eth.getBalance(alice);
-
-
-
-		return contract.split({from:alice, value:amountToSend})
+		return splitterContract.split(bob,carol, {from:alice, value:amountToSend})
 		.then(function(tx){
-			var gasUsed = tx.receipt.gasUsed; 
-			var gasPrice = web3.eth.getTransaction(tx.tx).gasPrice;
-			var expectedBalanceAlice = balanceAlice.minus(gasPrice.times(gasUsed))
-											.minus(amountToSend);
-			
-			newBalanceBob = web3.eth.getBalance(bob);
-			newBalanceCarol = web3.eth.getBalance(carol);
-			newBalanceAlice = web3.eth.getBalance(alice);
+			gasUsed = tx.receipt.gasUsed; 
+			web3.eth.getTransaction(tx.tx,(err, txInfo) => {
+				gasPrice = txInfo.gasPrice;
+				gasCost = gasPrice.times(gasUsed);	
+				expectedBalanceAlice = balanceAlice.minus(gasCost).minus(amountToSend);
+			});
 
-			assert.strictEqual(balanceBob.plus(amountToSend/2).toString(10), newBalanceBob.toString(10), "Bob's balance incorrect");
+			web3.eth.getBalance(alice,(err, balance) => {
+				newBalanceAlice = balance;	
+			});
 
-			assert.strictEqual(balanceCarol.plus(amountToSend/2).toString(10), newBalanceCarol.toString(10), "Carol's balance incorrect");
+			return splitterContract.balances.call(bob)
+			.then((bobBalance) => {
 
-			assert.strictEqual(newBalanceAlice.toString(10), expectedBalanceAlice.toString(10), "Alice's balance incorrect");
+				assert.strictEqual(bobBalance.toString(10),halfAmount.toString(10),"Bob's contract balance incorrect.");
 
+				return splitterContract.balances.call(carol)
+				.then((carolBalance) => {
+					assert.strictEqual(carolBalance.toString(10),halfAmount.toString(10),"Carol's contract balance incorrect.");
 
+					return splitterContract.withdrawal({from:bob})
+					.then((txBob) => {
+						gasUsed = txBob.receipt.gasUsed; 
+						web3.eth.getTransaction(txBob.tx,(err, txInfo) => {
+						gasPrice = txInfo.gasPrice;
+						gasCost = gasPrice.times(gasUsed);	
+						expectedBalanceBob = balanceBob.minus(gasCost).plus(halfAmount);
+						});
 
-		});
+						web3.eth.getBalance(bob,(err, balance) => {
+						newBalanceBob = balance;	
+						});
+
+						return splitterContract.withdrawal({from:carol})
+						.then((txCarol) => {
+							gasUsed = txCarol.receipt.gasUsed; 
+							
+							web3.eth.getTransaction(txCarol.tx,(err, txInfo) => {
+							gasPrice = txInfo.gasPrice;
+							gasCost = gasPrice.times(gasUsed);	
+							expectedBalanceCarol = balanceCarol.minus(gasCost).plus(halfAmount);
+							});
+
+							web3.eth.getBalance(carol,(err, balance) => {
+							newBalanceCarol = balance;	
+							});
+
+							return splitterContract.balances.call(bob)
+							.then((bobBalance)=>{
+								assert.equal(bobBalance.toString(10),0,"Bob contract balance not 0 after withdrawal.")
+
+								return splitterContract.balances.call(carol)
+								.then((carolBalance) => {
+
+									assert.equal(carolBalance.toString(10),0,"Carol contract balance not 0 after withdrawal.")
+								});						
+							});
+						});				
+					});
+				});	
+			});
+		}).then(() => {
+			assert.strictEqual(newBalanceAlice.toString(10), expectedBalanceAlice.toString(10),
+			"Alice balance incorrect.");
+			assert.strictEqual(newBalanceBob.toString(10), expectedBalanceBob.toString(10),
+							"Bob balance incorrect.");
+			assert.strictEqual(newBalanceCarol.toString(10), expectedBalanceCarol.toString(10),
+								"Carol balance incorrect.");
+			});
 	});
 
+	it ("rejects non-Alice sender", function(){
+		var amountToSend = web3.toBigNumber(5454545454);
 
-	it("rejects non-Alice sender", function(){
-		var amountToSend = 5454545454;
-		var newBalanceBob;
-		var newBalanceCarol;
-		var newBalanceAlice;
-
-		balanceBob = web3.eth.getBalance(bob);
-		balanceCarol = web3.eth.getBalance(carol);
-		balanceAlice = web3.eth.getBalance(alice);
-
-
-		return contract.split({from:accounts[3], value:amountToSend})
-		.then(function(){
-
-			assert.isTrue(true, "Did not revert non-Alice sender")
-
-			
-		}) .catch(function(err) {
-		     // assert.isTrue(err.toString().includes("Error: VM Exception while processing transaction: revert"),
-		     //  "Split function did not revert");
-						
-			newBalanceBob = web3.eth.getBalance(bob);
-			newBalanceCarol = web3.eth.getBalance(carol);
-			newBalanceAlice = web3.eth.getBalance(alice);
-			
-
-			assert.strictEqual(balanceBob.toString(10), newBalanceBob.toString(10), "Bob's balance incorrect");
-
-			assert.strictEqual(balanceCarol.toString(10), newBalanceCarol.toString(10), "Carol's balance incorrect");
-
-			assert.strictEqual(balanceAlice.toString(10), newBalanceAlice.toString(10), "Alice's balance incorrect");
-    	});
+		return expectedExceptionPromise(() =>{
+			return splitterContract.split(bob,carol,{from:bob,value:amountToSend})
+			});
 	});
 
-	
+	it ("rejects 0 value", function(){
+		var amountToSend = web3.toBigNumber(0);
 
-	it("rejects 0 value", function(){
-		var amountToSend = 0;
-		var newBalanceBob;
-		var newBalanceCarol;
-		var newBalanceAlice;
-
-		balanceBob = web3.eth.getBalance(bob);
-		balanceCarol = web3.eth.getBalance(carol);
-		balanceAlice = web3.eth.getBalance(alice);
-
-		return contract.split({from:alice, value:amountToSend})
-		.then(function(){
-
-			assert.isTrue(true, "Did not revert 0 value being sent")
-
-			
-		}) .catch(function(err) {
-		     // assert.isTrue(err.toString().includes("Error: VM Exception while processing transaction: revert"),
-		     //  "Split function did not revert");	
-
-		    var gasUsed = err.receipt.gasUsed; 
-			var gasPrice = web3.eth.getTransaction(err.tx).gasPrice;
-			var expectedBalanceAlice = balanceAlice.minus(gasPrice.times(gasUsed));
-
-
-
-			newBalanceBob = web3.eth.getBalance(bob);
-			newBalanceCarol = web3.eth.getBalance(carol);
-			newBalanceAlice = web3.eth.getBalance(alice);
-			
-
-			assert.strictEqual(balanceBob.toString(10), newBalanceBob.toString(10), "Bob's balance incorrect");
-
-			assert.strictEqual(balanceCarol.toString(10), newBalanceCarol.toString(10), "Carol's balance incorrect");
-
-			assert.strictEqual(newBalanceAlice.toString(10), expectedBalanceAlice.toString(10), "Alice's balance incorrect");
-    	});
+		return expectedExceptionPromise(() =>{
+			return splitterContract.split(bob,carol,{from:alice,value:amountToSend})
+			});
 	});
 
-	it("rejects odd value", function(){
-		var amountToSend = 75757575753993;
-		var newBalanceBob;
-		var newBalanceCarol;
-		var newBalanceAlice;
+	it ("rejects odd value", function(){
+		var amountToSend = web3.toBigNumber(5454545455);
 
-		balanceBob = web3.eth.getBalance(bob);
-		balanceCarol = web3.eth.getBalance(carol);
-		balanceAlice = web3.eth.getBalance(alice);
-
-
-		return contract.split({from:alice, value:amountToSend})
-		.then(function(){
-
-			assert.isTrue(true, "Did not revert odd value being sent")
-
-			
-		}) .catch(function(err) {
-		     // assert.isTrue(err.toString().includes("Error: VM Exception while processing transaction: revert"),
-		     //  "Split function did not revert");
-						
-		    var gasUsed = err.receipt.gasUsed; 
-			var gasPrice = web3.eth.getTransaction(err.tx).gasPrice;
-			var expectedBalanceAlice = balanceAlice.minus(gasPrice.times(gasUsed));
-
-
-			newBalanceBob = web3.eth.getBalance(bob);
-			newBalanceCarol = web3.eth.getBalance(carol);
-			newBalanceAlice = web3.eth.getBalance(alice);
-			
-
-			assert.strictEqual(balanceBob.toString(10), newBalanceBob.toString(10), "Bob's balance incorrect");
-
-			assert.strictEqual(balanceCarol.toString(10), newBalanceCarol.toString(10), "Carol's balance incorrect");
-
-			assert.strictEqual(newBalanceAlice.toString(10), expectedBalanceAlice.toString(10), "Alice's balance incorrect");
-    	});
+		return expectedExceptionPromise(() =>{
+			return splitterContract.split(bob,carol,{from:alice,value:amountToSend})
+			});
 	});
-
-
-
 })
